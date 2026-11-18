@@ -1,79 +1,123 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// The screenshot scenes behind ?shot=<name>&seed=N. Each one plays the real rules
+// forward from a fresh, seeded world for a fixed number of fixed steps, steered by a
+// simple autopilot, so the frame is what the game really looks like and the same seed
+// always gives the same frame. Stage one ships 'city' (the postcard: Marlo driving
+// down Avenida Coral in traffic), plus the starter's 'start' and 'play' shapes —
+// 'start' idles the world under the title, 'play' walks Marlo down the pavement.
+// Stage two adds 'chase' (three stars, the Patrulla on his tail, the hunt live on
+// the HUD and minimap) and 'mission' (mid-delivery, the crate in the car, the
+// objective line and the loading-bay marker up). Stage three adds 'dusk': the
+// driving postcard at last light, on the avenue along the riverside park.
 
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
+import { STEP, TRAFFIC } from './config.js';
+import { stagePursuit } from './police.js';
+import { debugForceMission } from './missions.js';
 
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
-    }
-  }
-  return Infinity;
+const IDLE = { mx: 0, my: 0, sprint: false, throttle: 0, steer: 0, handbrake: false };
+
+/** Put Marlo into the first traffic car, staged in the southbound lane of an avenue. */
+function stageDriving(world, avenueName = 'Avenida Coral') {
+  const { city, player } = world;
+  const avenue = city.vRoads.find((r) => r.name === avenueName) ?? city.vRoads[2];
+  const street = city.hRoads[2];
+  const car = world.cars.find((c) => c.kind === 'traffic');
+  if (!car || !avenue || !street) return null;
+  car.kind = 'player';
+  car.x = avenue.center - TRAFFIC.laneOffset; // southbound lane (right-hand traffic)
+  car.y = street.center - 330;
+  car.angle = Math.PI / 2;
+  car.vx = 0;
+  car.vy = 0;
+  car.speed = 0;
+  player.car = car;
+  player.x = car.x;
+  player.y = car.y;
+  return { laneX: avenue.center - TRAFFIC.laneOffset };
 }
 
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
-  }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
-    }
-  }
-  return best;
+/** A lane-keeping pilot: hold the throttle, steer gently back to the lane centre. */
+function drivingControls(car, laneX) {
+  const angleError = Math.atan2(Math.sin(Math.PI / 2 - car.angle), Math.cos(Math.PI / 2 - car.angle));
+  const steer = Math.max(-1, Math.min(1, (laneX - car.x) * 0.012 + angleError * 1.6));
+  return { mx: 0, my: 0, sprint: false, throttle: car.speed < 40 ? 1 : 0.72, steer, handbrake: false };
 }
 
 /**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
+ * Set `world` to the named scene and return the screen to draw over it
+ * ('title' for start, 'play' for everything else).
  */
 export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
+  if (name === 'start') {
+    for (let i = 0; i < 4 / STEP; i += 1) world.step(STEP, IDLE);
+    return { screen: 'title' };
   }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
+  if (name === 'play') {
+    // Six seconds south along the pavement from the spawn corner, traffic going by.
+    const walk = { ...IDLE, my: 1 };
+    for (let i = 0; i < 6 / STEP; i += 1) world.step(STEP, walk);
+    return { screen: 'play' };
   }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
+  if (name === 'chase') {
+    // The postcard, gone wrong: same avenue, three stars, patrol cars behind him.
+    const staged = stageDriving(world);
+    if (!staged) {
+      for (let i = 0; i < 4 / STEP; i += 1) world.step(STEP, IDLE);
+      return { screen: 'play' };
+    }
+    stagePursuit(world, 3);
+    for (let i = 0; i < 5.5 / STEP; i += 1) {
+      world.step(STEP, drivingControls(world.player.car, staged.laneX));
+    }
+    // The drive itself is real play — bumps included — but the scene is staged at
+    // three stars: settle the heat back to exactly that, with the original three
+    // units, for the frame.
+    world.police.heat = 300;
+    world.wanted = 3;
+    world.police.bustTimer = 0;
+    while (world.police.units.length > 3) {
+      const extra = world.police.units.pop();
+      const i = world.cars.indexOf(extra);
+      if (i >= 0) world.cars.splice(i, 1);
+    }
+    return { screen: 'play' };
+  }
+  if (name === 'mission') {
+    // Mid-delivery on the first favour: crate aboard, clock running, bay marked.
+    const staged = stageDriving(world);
+    if (!staged) {
+      for (let i = 0; i < 4 / STEP; i += 1) world.step(STEP, IDLE);
+      return { screen: 'play' };
+    }
+    debugForceMission(world, 0, 1);
+    for (let i = 0; i < 5 / STEP; i += 1) {
+      world.step(STEP, drivingControls(world.player.car, staged.laneX));
+    }
+    return { screen: 'play' };
+  }
+  if (name === 'dusk') {
+    // The postcard at last light: Calle Solano runs beside the riverside park,
+    // so the frame holds the avenue, the river and the first lit windows.
+    const staged = stageDriving(world, 'Calle Solano');
+    if (!staged) {
+      for (let i = 0; i < 4 / STEP; i += 1) world.step(STEP, IDLE);
+      return { screen: 'play' };
+    }
+    // Deepest dusk (the factor tops out from dayTime 0.80 to 0.92; the drive
+    // below advances it by under 0.02, so the light holds for the whole frame).
+    world.dayTime = 0.84;
+    for (let i = 0; i < 6.5 / STEP; i += 1) {
+      world.step(STEP, drivingControls(world.player.car, staged.laneX));
+    }
+    return { screen: 'play' };
+  }
+  // 'city', and the default for any other name: the driving postcard.
+  const staged = stageDriving(world);
+  if (!staged) {
+    for (let i = 0; i < 4 / STEP; i += 1) world.step(STEP, IDLE);
+    return { screen: 'play' };
+  }
+  for (let i = 0; i < 6.5 / STEP; i += 1) {
+    world.step(STEP, drivingControls(world.player.car, staged.laneX));
+  }
+  return { screen: 'play' };
 }

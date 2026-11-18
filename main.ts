@@ -1,12 +1,25 @@
-// A working gta6-01 entry (Node 22, standard library only): the game is this directory's
-// game/ folder, plain static files a desktop browser loads offline (game/index.html and its ES
-// modules, no library and no network request), and the program hands it in. It copies game/ and
-// screenshots/ from beside this file to /output and writes /output/dossier.json, the summary the
-// judge reads, with the vendored make.fun library. Only the plumbing, not an open world: Block
-// Dodger, a plain 2D canvas game where a paddle dodges falling blocks and catches coins, with a
-// title screen, score, lives and levels, game over and restart, flat colours and no sound. Build
-// your own open-world crime game in its place (three.js or any library you vendor under game/),
-// put your 3 or 4 PNG or JPEG screenshots in screenshots/ (the first by name is the cover) and run it.
+// Solmaris — a gta6-01 entry (Node 22, standard library only). The game is this directory's
+// game/ folder: plain static files a desktop browser loads offline (game/index.html and its ES
+// modules under game/src/, no library, no assets, no network request), and this program hands
+// it in. It copies game/ and screenshots/ from beside this file to /output and writes
+// /output/dossier.json, the summary the judge reads, with the vendored make.fun library.
+//
+// The game itself: a 2D top-down open-world crime story in Puerto Solmaris, an original
+// sun-soaked port city generated tile by tile — avenues and streets, named buildings with
+// signs and windows that light up toward dusk, parks, a river crossed by bridges, a beach
+// and the bay. Marlo Reyes, dock courier, walks or runs the pavements, gets into parked and
+// circulating cars alike (E), and drives them with a small arcade physics model while
+// traffic circulates on right-hand lanes, brakes, turns at crossings and honks, and
+// pedestrians stroll and hop out of the way. Stage two makes it a crime story: a heat
+// and wanted system with Patrulla pursuit, arrest and escape; fists and a hitscan
+// pistol; a three-chapter mission chain for dock dispatcher Nadia Ferro, with dialogue
+// panels, timed delivery, a police escape and a beach collection; a repair yard and a
+// supply shop; BUSTED and WASTED respawns at the station and the hospital. HUD with
+// health/armour, money, wanted stars, an objective line and the current street; a
+// full-city minimap with police and place blips; WebAudio-synthesized door, horn,
+// crash, gunshot and engine sounds (no audio files); a localStorage save. Deterministic
+// screenshot scenes live behind ?shot=city|start|play|chase|mission|dusk&seed=N in
+// game/src/shots.js.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
